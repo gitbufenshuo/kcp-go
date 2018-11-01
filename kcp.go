@@ -669,7 +669,6 @@ func (kcp *KCP) Print() {
 	fmt.Println("--------------------------kcp.snd_una", kcp.snd_una)
 	fmt.Println("--------------------------kcp.snd_nxt", kcp.snd_nxt)
 	fmt.Println("--------------------------kcp.rcv_nxt", kcp.rcv_nxt)
-	fmt.Println("--------------------------kcp.snd_nxt", kcp.snd_nxt)
 
 	fmt.Println("--------------------------kcp.ssthresh", kcp.ssthresh)
 	fmt.Println("--------------------------kcp.rx_rttvar", kcp.rx_rttvar)
@@ -790,11 +789,12 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	if kcp.nocwnd == 0 {
 		cwnd = _imin_(kcp.cwnd, cwnd)
 	}
-
+	fmt.Println("cwnd ---------- ", cwnd)
 	// sliding window, controlled by snd_nxt && sna_una+cwnd
 	newSegsCount := 0
 	for k := range kcp.snd_queue {
 		if _itimediff(kcp.snd_nxt, kcp.snd_una+cwnd) >= 0 {
+			fmt.Println("range snd_queue ---------- break", k)
 			break
 		}
 		newseg := kcp.snd_queue[k]
@@ -820,7 +820,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	current := currentMs()
 	var change, lost, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 	minrto := int32(kcp.interval)
-
+	fmt.Println("len kcp.snd_buf -------", len(kcp.snd_buf))
 	ref := kcp.snd_buf[:len(kcp.snd_buf)] // for bounds check elimination
 	for k := range ref {
 		segment := &ref[k]
