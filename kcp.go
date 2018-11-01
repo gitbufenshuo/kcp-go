@@ -3,6 +3,7 @@ package kcp
 
 import (
 	"encoding/binary"
+	"fmt"
 	"sync/atomic"
 )
 
@@ -121,7 +122,20 @@ func (seg *segment) encode(ptr []byte) []byte {
 	return ptr
 }
 
+func (seg *segment) Print() {
+	fmt.Println(">>>>>>>>flush--seg:")
+	fmt.Println("seg.conv", seg.conv)
+	fmt.Println("seg.cmd", seg.cmd)
+	fmt.Println("seg.frg", seg.frg)
+	fmt.Println("seg.wnd", seg.wnd)
+	fmt.Println("seg.ts", seg.ts)
+	fmt.Println("seg.sn", seg.sn)
+	fmt.Println("seg.una", seg.una)
+	fmt.Println("seg.rto", seg.rto)
+}
+
 // KCP defines a single KCP connection
+// mss 就是用户数据的最大值(不包括自定义的 header)
 type KCP struct {
 	conv, mtu, mss, state                  uint32
 	snd_una, snd_nxt, rcv_nxt              uint32
@@ -274,9 +288,9 @@ func (kcp *KCP) Recv(buffer []byte) (n int) {
 }
 
 // Send is user/upper level send, returns below zero for error
-func (kcp *KCP) Send(buffer []byte) int {
+func (kcp *KCP) Send(data []byte) int {
 	var count int
-	if len(buffer) == 0 {
+	if len(data) == 0 {
 		return -1
 	}
 
@@ -288,28 +302,28 @@ func (kcp *KCP) Send(buffer []byte) int {
 			if len(seg.data) < int(kcp.mss) {
 				capacity := int(kcp.mss) - len(seg.data)
 				extend := capacity
-				if len(buffer) < capacity {
-					extend = len(buffer)
+				if len(data) < capacity {
+					extend = len(data)
 				}
 
 				// grow slice, the underlying cap is guaranteed to
 				// be larger than kcp.mss
 				oldlen := len(seg.data)
 				seg.data = seg.data[:oldlen+extend]
-				copy(seg.data[oldlen:], buffer)
-				buffer = buffer[extend:]
+				copy(seg.data[oldlen:], data)
+				data = data[extend:]
 			}
 		}
 
-		if len(buffer) == 0 {
+		if len(data) == 0 {
 			return 0
 		}
 	}
 
-	if len(buffer) <= int(kcp.mss) {
+	if len(data) <= int(kcp.mss) {
 		count = 1
 	} else {
-		count = (len(buffer) + int(kcp.mss) - 1) / int(kcp.mss)
+		count = (len(data) + int(kcp.mss) - 1) / int(kcp.mss)
 	}
 
 	if count > 255 {
@@ -322,20 +336,20 @@ func (kcp *KCP) Send(buffer []byte) int {
 
 	for i := 0; i < count; i++ {
 		var size int
-		if len(buffer) > int(kcp.mss) {
+		if len(data) > int(kcp.mss) {
 			size = int(kcp.mss)
 		} else {
-			size = len(buffer)
+			size = len(data)
 		}
 		seg := kcp.newSegment(size)
-		copy(seg.data, buffer[:size])
+		copy(seg.data, data[:size])
 		if kcp.stream == 0 { // message mode
 			seg.frg = uint8(count - i - 1)
 		} else { // stream mode
 			seg.frg = 0
 		}
 		kcp.snd_queue = append(kcp.snd_queue, seg)
-		buffer = buffer[size:]
+		data = data[size:]
 	}
 	return 0
 }
@@ -622,6 +636,73 @@ func (kcp *KCP) wnd_unused() uint16 {
 	return 0
 }
 
+// conv, mtu, mss, state                  uint32
+// snd_una, snd_nxt, rcv_nxt              uint32
+
+// ssthresh                               uint32
+// rx_rttvar, rx_srtt                     int32
+// rx_rto, rx_minrto                      uint32
+// snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe uint32
+// interval, ts_flush                     uint32
+// nodelay, updated                       uint32
+// ts_probe, probe_wait                   uint32
+// dead_link, incr                        uint32
+
+// fastresend     int32
+// nocwnd, stream int32
+
+// snd_queue []segment
+// rcv_queue []segment
+// snd_buf   []segment
+// rcv_buf   []segment
+
+// acklist []ackItem
+
+// buffer []byte
+func (kcp *KCP) Print() {
+	fmt.Println("-------------------------->>>>>>>>flush--kcp:")
+
+	fmt.Println("--------------------------kcp.conv", kcp.conv)
+	fmt.Println("--------------------------kcp.mtu", kcp.mtu)
+	fmt.Println("--------------------------kcp.mss", kcp.mss)
+	fmt.Println("--------------------------kcp.state", kcp.state)
+	fmt.Println("--------------------------kcp.snd_una", kcp.snd_una)
+	fmt.Println("--------------------------kcp.snd_nxt", kcp.snd_nxt)
+	fmt.Println("--------------------------kcp.rcv_nxt", kcp.rcv_nxt)
+	fmt.Println("--------------------------kcp.snd_nxt", kcp.snd_nxt)
+
+	fmt.Println("--------------------------kcp.ssthresh", kcp.ssthresh)
+	fmt.Println("--------------------------kcp.rx_rttvar", kcp.rx_rttvar)
+	fmt.Println("--------------------------kcp.rx_srtt", kcp.rx_srtt)
+	fmt.Println("--------------------------kcp.snd_wnd", kcp.snd_wnd)
+	fmt.Println("--------------------------kcp.rcv_wnd", kcp.rcv_wnd)
+	fmt.Println("--------------------------kcp.rmt_wnd", kcp.rmt_wnd)
+	fmt.Println("--------------------------kcp.cwnd", kcp.cwnd)
+	fmt.Println("--------------------------kcp.probe", kcp.probe)
+	fmt.Println("--------------------------kcp.interval", kcp.interval)
+	fmt.Println("--------------------------kcp.ts_flush", kcp.ts_flush)
+	fmt.Println("--------------------------kcp.nodelay", kcp.nodelay)
+	fmt.Println("--------------------------kcp.updated", kcp.updated)
+
+	fmt.Println("--------------------------kcp.ts_probe", kcp.ts_probe)
+	fmt.Println("--------------------------kcp.probe_wait", kcp.probe_wait)
+	fmt.Println("--------------------------kcp.dead_link", kcp.dead_link)
+	fmt.Println("--------------------------kcp.incr", kcp.incr)
+
+	fmt.Println("--------------------------kcp.fastresend", kcp.fastresend)
+	fmt.Println("--------------------------kcp.nocwnd", kcp.nocwnd)
+	fmt.Println("--------------------------kcp.stream", kcp.stream)
+
+	fmt.Println("--------------------------len kcp.snd_queue", len(kcp.snd_queue))
+	fmt.Println("--------------------------len kcp.rcv_queue", len(kcp.rcv_queue))
+	fmt.Println("--------------------------len kcp.snd_buf", len(kcp.snd_buf))
+	fmt.Println("--------------------------len kcp.rcv_buf", len(kcp.rcv_buf))
+
+	fmt.Println("--------------------------len kcp.acklist", len(kcp.acklist))
+	fmt.Println("--------------------------len kcp.buffer", len(kcp.buffer))
+
+}
+
 // flush pending data
 func (kcp *KCP) flush(ackOnly bool) uint32 {
 	var seg segment
@@ -629,7 +710,8 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	seg.cmd = IKCP_CMD_ACK
 	seg.wnd = kcp.wnd_unused()
 	seg.una = kcp.rcv_nxt
-
+	kcp.Print()
+	seg.Print()
 	buffer := kcp.buffer
 	// flush acknowledges
 	ptr := buffer

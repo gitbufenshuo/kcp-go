@@ -3,6 +3,7 @@ package kcp
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"net"
 	"sync"
@@ -246,7 +247,7 @@ func (s *UDPSession) Read(b []byte) (n int, err error) {
 }
 
 // Write implements net.Conn
-func (s *UDPSession) Write(b []byte) (n int, err error) {
+func (s *UDPSession) Write(data []byte) (n int, err error) {
 	for {
 		s.mu.Lock()
 		if s.isClosed {
@@ -257,14 +258,14 @@ func (s *UDPSession) Write(b []byte) (n int, err error) {
 		// controls how much data will be sent to kcp core
 		// to prevent the memory from exhuasting
 		if s.kcp.WaitSnd() < int(s.kcp.snd_wnd) {
-			n = len(b)
+			n = len(data)
 			for {
-				if len(b) <= int(s.kcp.mss) {
-					s.kcp.Send(b)
+				if len(data) <= int(s.kcp.mss) {
+					s.kcp.Send(data)
 					break
 				} else {
-					s.kcp.Send(b[:s.kcp.mss])
-					b = b[s.kcp.mss:]
+					s.kcp.Send(data[:s.kcp.mss])
+					data = data[s.kcp.mss:]
 				}
 			}
 
@@ -466,6 +467,7 @@ func (s *UDPSession) SetWriteBuffer(bytes int) error {
 // 3. Encryption
 // 4. WriteTo kernel
 func (s *UDPSession) output(buf []byte) {
+	fmt.Println("output(buf []byte)", len(buf))
 	var ecc [][]byte
 
 	// 0. extend buf's header space(if necessary)
@@ -500,6 +502,7 @@ func (s *UDPSession) output(buf []byte) {
 	npkts := 0
 	for i := 0; i < s.dup+1; i++ {
 		if n, err := s.conn.WriteTo(ext, s.remote); err == nil {
+			fmt.Println("conn.WriteTo", "up----------------------", s.remote)
 			nbytes += n
 			npkts++
 		}
@@ -507,6 +510,7 @@ func (s *UDPSession) output(buf []byte) {
 
 	for k := range ecc {
 		if n, err := s.conn.WriteTo(ecc[k], s.remote); err == nil {
+			fmt.Println("conn.WriteTo", "down----------------------", s.remote)
 			nbytes += n
 			npkts++
 		}
