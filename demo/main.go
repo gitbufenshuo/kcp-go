@@ -12,7 +12,14 @@ func main() {
 		panic(err)
 	}
 	for {
-		kcpconn.Write([]byte("hello-world"))
-		time.Sleep(time.Second * 9999)
+		kcpconn.Write([]byte("hello-world--1"))
+		kcpconn.Write([]byte("hello-world--1"))
+		kcpconn.Write([]byte("hello-world--1"))
+		kcpconn.Write([]byte("hello-world--1"))
+		kcpconn.Write([]byte("hello-world--1"))
+
+		// time.Sleep(time.Second * 10)
+		// kcpconn.Write([]byte("hello-world--2"))
+		time.Sleep(time.Second * 100000)
 	}
 }

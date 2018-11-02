@@ -2,8 +2,10 @@
 package kcp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"os"
 	"sync/atomic"
 )
 
@@ -158,8 +160,10 @@ type KCP struct {
 
 	acklist []ackItem
 
-	buffer []byte
-	output output_callback
+	buffer       []byte
+	output       output_callback
+	loggerBuffer *bytes.Buffer
+	loggerIndex  int
 }
 
 type ackItem struct {
@@ -185,6 +189,12 @@ func NewKCP(conv uint32, output output_callback) *KCP {
 	kcp.ssthresh = IKCP_THRESH_INIT
 	kcp.dead_link = IKCP_DEADLINK
 	kcp.output = output
+	kcp.loggerBuffer = new(bytes.Buffer)
+	kcp.loggerBuffer.WriteString("index,conv,mtu,mss,state,snd_una,snd_nxt,rcv_nxt,ssthresh,rx_rttvar,rx_srtt,")
+	kcp.loggerBuffer.WriteString("rx_rto,rx_minrto,snd_wnd,rcv_wnd,rmt_wnd,cwnd,probe,")
+	kcp.loggerBuffer.WriteString("interval,ts_flush,nodelay,updated,ts_probe,probe_wait,dead_link,incr,")
+	kcp.loggerBuffer.WriteString("fastresend,nocwnd,stream,snd_queue,rcv_queue,snd_buf,rcv_buf,acklist,buffer,special")
+	kcp.loggerBuffer.WriteString("\n")
 	return kcp
 }
 
@@ -660,46 +670,23 @@ func (kcp *KCP) wnd_unused() uint16 {
 
 // buffer []byte
 func (kcp *KCP) Print() {
-	fmt.Println("-------------------------->>>>>>>>flush--kcp:")
-
-	fmt.Println("--------------------------kcp.conv", kcp.conv)
-	fmt.Println("--------------------------kcp.mtu", kcp.mtu)
-	fmt.Println("--------------------------kcp.mss", kcp.mss)
-	fmt.Println("--------------------------kcp.state", kcp.state)
-	fmt.Println("--------------------------kcp.snd_una", kcp.snd_una)
-	fmt.Println("--------------------------kcp.snd_nxt", kcp.snd_nxt)
-	fmt.Println("--------------------------kcp.rcv_nxt", kcp.rcv_nxt)
-
-	fmt.Println("--------------------------kcp.ssthresh", kcp.ssthresh)
-	fmt.Println("--------------------------kcp.rx_rttvar", kcp.rx_rttvar)
-	fmt.Println("--------------------------kcp.rx_srtt", kcp.rx_srtt)
-	fmt.Println("--------------------------kcp.snd_wnd", kcp.snd_wnd)
-	fmt.Println("--------------------------kcp.rcv_wnd", kcp.rcv_wnd)
-	fmt.Println("--------------------------kcp.rmt_wnd", kcp.rmt_wnd)
-	fmt.Println("--------------------------kcp.cwnd", kcp.cwnd)
-	fmt.Println("--------------------------kcp.probe", kcp.probe)
-	fmt.Println("--------------------------kcp.interval", kcp.interval)
-	fmt.Println("--------------------------kcp.ts_flush", kcp.ts_flush)
-	fmt.Println("--------------------------kcp.nodelay", kcp.nodelay)
-	fmt.Println("--------------------------kcp.updated", kcp.updated)
-
-	fmt.Println("--------------------------kcp.ts_probe", kcp.ts_probe)
-	fmt.Println("--------------------------kcp.probe_wait", kcp.probe_wait)
-	fmt.Println("--------------------------kcp.dead_link", kcp.dead_link)
-	fmt.Println("--------------------------kcp.incr", kcp.incr)
-
-	fmt.Println("--------------------------kcp.fastresend", kcp.fastresend)
-	fmt.Println("--------------------------kcp.nocwnd", kcp.nocwnd)
-	fmt.Println("--------------------------kcp.stream", kcp.stream)
-
-	fmt.Println("--------------------------len kcp.snd_queue", len(kcp.snd_queue))
-	fmt.Println("--------------------------len kcp.rcv_queue", len(kcp.rcv_queue))
-	fmt.Println("--------------------------len kcp.snd_buf", len(kcp.snd_buf))
-	fmt.Println("--------------------------len kcp.rcv_buf", len(kcp.rcv_buf))
-
-	fmt.Println("--------------------------len kcp.acklist", len(kcp.acklist))
-	fmt.Println("--------------------------len kcp.buffer", len(kcp.buffer))
-
+	kcp.loggerIndex++
+	kcp.loggerBuffer.WriteString(
+		fmt.Sprintf(
+			"%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v\n",
+			kcp.loggerIndex, kcp.conv, kcp.mtu, kcp.mss, kcp.state, kcp.snd_una, kcp.snd_nxt, kcp.rcv_nxt,
+			kcp.ssthresh, kcp.rx_rttvar, kcp.rx_srtt, kcp.rx_rto, kcp.rx_minrto, kcp.snd_wnd, kcp.rcv_wnd, kcp.rmt_wnd, kcp.cwnd, kcp.probe,
+			kcp.interval, kcp.ts_flush, kcp.nodelay, kcp.updated,
+			kcp.ts_probe, kcp.probe_wait, kcp.dead_link, kcp.incr,
+			kcp.fastresend, kcp.nocwnd, kcp.stream, len(kcp.snd_queue), len(kcp.rcv_queue),
+			len(kcp.snd_buf), len(kcp.rcv_buf), len(kcp.acklist), len(kcp.buffer),
+			"special",
+		),
+	)
+	if kcp.loggerIndex == 100 {
+		fmt.Println(kcp.loggerBuffer.String())
+		os.Exit(1)
+	}
 }
 
 // flush pending data
@@ -709,7 +696,6 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	seg.cmd = IKCP_CMD_ACK
 	seg.wnd = kcp.wnd_unused()
 	seg.una = kcp.rcv_nxt
-	kcp.Print()
 	seg.Print()
 	buffer := kcp.buffer
 	// flush acknowledges
@@ -790,7 +776,15 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 		cwnd = _imin_(kcp.cwnd, cwnd)
 	}
 	fmt.Println("cwnd ---------- ", cwnd)
+	kcp.Print()
+
 	// sliding window, controlled by snd_nxt && sna_una+cwnd
+	// 这个循环把 snd_queue 中的数据在窗口的限制下，放到 snd_buf 里，
+	// 如果窗口满了，则可能一个也放不进去，
+	// 放进去几个，则 snd_queue 就需要从前面 remove 几个
+	// 就是 kcp.remove_front 这个函数做的事情
+	// 由此看出，snd_queue,是用户想要发出去的数据
+	// snd_buf 是真正写到内核的，并由网口发出去的
 	newSegsCount := 0
 	for k := range kcp.snd_queue {
 		if _itimediff(kcp.snd_nxt, kcp.snd_una+cwnd) >= 0 {
