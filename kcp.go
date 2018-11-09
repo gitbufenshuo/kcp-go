@@ -111,6 +111,7 @@ type segment struct {
 }
 
 // encode a segment into buffer
+// 不包含用户数据  data ， 只是头部
 func (seg *segment) encode(ptr []byte) []byte {
 	ptr = ikcp_encode32u(ptr, seg.conv)
 	ptr = ikcp_encode8u(ptr, seg.cmd)
@@ -298,6 +299,7 @@ func (kcp *KCP) Recv(buffer []byte) (n int) {
 }
 
 // Send is user/upper level send, returns below zero for error
+// 返回值是 生成的 segment 的数量，而不是 data 的数据大小
 func (kcp *KCP) Send(data []byte) int {
 	var count int
 	if len(data) == 0 {
@@ -333,6 +335,7 @@ func (kcp *KCP) Send(data []byte) int {
 	if len(data) <= int(kcp.mss) {
 		count = 1
 	} else {
+		// 怎么进来的
 		count = (len(data) + int(kcp.mss) - 1) / int(kcp.mss)
 	}
 
@@ -816,6 +819,9 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	minrto := int32(kcp.interval)
 	fmt.Println("len kcp.snd_buf -------", len(kcp.snd_buf))
 	ref := kcp.snd_buf[:len(kcp.snd_buf)] // for bounds check elimination
+	// kcp 有一个 buffer,需要发送的数据，也就是 kcp.snd_buf 这个数组，会编码，然后塞进 buffer 里
+	// 往里塞的过程，是一个一个遍历的，一旦，塞进去的数据和即将塞的数据，总长度大于 kcp.mtu，就 output 一次
+	// 把已经塞进去的数据 output 掉,然后再塞
 	for k := range ref {
 		segment := &ref[k]
 		needsend := false
@@ -857,7 +863,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 
 			size := len(buffer) - len(ptr)
 			need := IKCP_OVERHEAD + len(segment.data)
-
+			fmt.Printf("[] [] [] [] [] [] [] [] [] size_%v_need_%v_data_%v_kcp.mtu_%v_lenbuff_%v_lenptr_%v\n", size, need, len(segment.data), kcp.mtu, len(buffer), len(ptr))
 			if size+need > int(kcp.mtu) {
 				kcp.output(buffer, size)
 				current = currentMs() // time update for a blocking call
@@ -882,6 +888,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	// flash remain segments
 	size := len(buffer) - len(ptr)
 	if size > 0 {
+		fmt.Println("flash remain segments")
 		kcp.output(buffer, size)
 	}
 
