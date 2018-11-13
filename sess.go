@@ -256,7 +256,8 @@ func (s *UDPSession) Write(data []byte) (n int, err error) {
 		}
 
 		// controls how much data will be sent to kcp core
-		// to prevent the memory from exhuasting
+		// to prevent the memory from exhausting
+		// kcp.Send 影响 snd_queue: append
 		if s.kcp.WaitSnd() < int(s.kcp.snd_wnd) {
 			n = len(data)
 			for {

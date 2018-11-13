@@ -726,6 +726,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	}
 
 	// probe window size (if remote window size equals zero)
+	// kcp.rmt_wnd 啥时候更新呢
 	if kcp.rmt_wnd == 0 {
 		current := currentMs()
 		if kcp.probe_wait == 0 {
