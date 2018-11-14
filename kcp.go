@@ -104,7 +104,7 @@ type segment struct {
 	sn       uint32
 	una      uint32
 	rto      uint32
-	xmit     uint32
+	xmit     uint32 // 试图发送过几次了
 	resendts uint32
 	fastack  uint32
 	data     []byte
@@ -145,7 +145,7 @@ type KCP struct {
 	ssthresh                               uint32
 	rx_rttvar, rx_srtt                     int32
 	rx_rto, rx_minrto                      uint32
-	snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe uint32
+	snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe uint32 // cwnd:congestion window 拥塞控制窗口 http://www.ece.virginia.edu/~mv/edu/ee136/Lectures/congestion-control/tcp-congestion-control.pdf
 	interval, ts_flush                     uint32
 	nodelay, updated                       uint32
 	ts_probe, probe_wait                   uint32
@@ -697,8 +697,8 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	var seg segment
 	seg.conv = kcp.conv
 	seg.cmd = IKCP_CMD_ACK
-	seg.wnd = kcp.wnd_unused()
-	seg.una = kcp.rcv_nxt
+	seg.wnd = kcp.wnd_unused() // 告诉对方我的接收窗口大小
+	seg.una = kcp.rcv_nxt      // 我想收的下一个 seg 序号
 	seg.Print()
 	buffer := kcp.buffer
 	// flush acknowledges
@@ -727,7 +727,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 
 	// probe window size (if remote window size equals zero)
 	// kcp.rmt_wnd 啥时候更新呢
-	if kcp.rmt_wnd == 0 {
+	if kcp.rmt_wnd == 0 { // 如果对方窗口是0，我们就需要探测对方窗口
 		current := currentMs()
 		if kcp.probe_wait == 0 {
 			kcp.probe_wait = IKCP_PROBE_INIT
@@ -774,10 +774,10 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 
 	kcp.probe = 0
 
-	// calculate window size
-	cwnd := _imin_(kcp.snd_wnd, kcp.rmt_wnd)
-	if kcp.nocwnd == 0 {
-		cwnd = _imin_(kcp.cwnd, cwnd)
+	cwnd := _imin_(kcp.snd_wnd, kcp.rmt_wnd) // advertised window
+	// 经过拥塞控制, 计算现在的发送窗口大小
+	if kcp.nocwnd == 0 { // 等于 0 说明需要拥塞控制 Allowed Window = MIN (advertised window, congestion window)
+		cwnd = _imin_(cwnd, kcp.cwnd) // http://www.ece.virginia.edu/~mv/edu/ee136/Lectures/congestion-control/tcp-congestion-control.pdf
 	}
 	fmt.Println("cwnd ---------- ", cwnd)
 	kcp.Print()
@@ -798,9 +798,9 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 		newseg := kcp.snd_queue[k]
 		newseg.conv = kcp.conv
 		newseg.cmd = IKCP_CMD_PUSH
-		newseg.sn = kcp.snd_nxt
+		newseg.sn = kcp.snd_nxt // 类似 tcp 里的 seq
 		kcp.snd_buf = append(kcp.snd_buf, newseg)
-		kcp.snd_nxt++
+		kcp.snd_nxt++ // 只要把 snd_queue 里的数据弄到 snd_buf 里就算发送了一个 所以 snd_nxt += 1
 		newSegsCount++
 		kcp.snd_queue[k].data = nil
 	}
@@ -817,7 +817,7 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	// check for retransmissions
 	current := currentMs()
 	var change, lost, lostSegs, fastRetransSegs, earlyRetransSegs uint64
-	minrto := int32(kcp.interval)
+	minrto := int32(kcp.interval) // 最小的重传超时
 	fmt.Println("len kcp.snd_buf -------", len(kcp.snd_buf))
 	ref := kcp.snd_buf[:len(kcp.snd_buf)] // for bounds check elimination
 	// kcp 有一个 buffer,需要发送的数据，也就是 kcp.snd_buf 这个数组，会编码，然后塞进 buffer 里
@@ -826,15 +826,15 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 	for k := range ref {
 		segment := &ref[k]
 		needsend := false
-		if segment.xmit == 0 { // initial transmit
+		if segment.xmit == 0 { // initial transmit,表示还没发送过这个 seg
 			needsend = true
 			segment.rto = kcp.rx_rto
 			segment.resendts = current + segment.rto
 		} else if _itimediff(current, segment.resendts) >= 0 { // RTO
 			needsend = true
-			if kcp.nodelay == 0 {
+			if kcp.nodelay == 0 { // 延迟模式
 				segment.rto += kcp.rx_rto
-			} else {
+			} else { // 不延迟模式, 所以希望很快得到 ack
 				segment.rto += kcp.rx_rto / 2
 			}
 			segment.resendts = current + segment.rto
@@ -871,9 +871,9 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 				ptr = buffer
 			}
 
-			ptr = segment.encode(ptr)
-			copy(ptr, segment.data)
-			ptr = ptr[len(segment.data):]
+			ptr = segment.encode(ptr)     // - 这三步
+			copy(ptr, segment.data)       // -- 浑然天成
+			ptr = ptr[len(segment.data):] // --- 不可分割
 
 			if segment.xmit >= kcp.dead_link {
 				kcp.state = 0xFFFFFFFF
@@ -881,6 +881,9 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 		}
 
 		// get the nearest rto
+		// rto 大于现在的时间了????没看懂
+		errstring := fmt.Sprintf("%v:%v__%v____%v", segment.xmit, kcp.rx_rto, segment.rto, current)
+		fmt.Println(errstring)
 		if rto := _itimediff(segment.rto, current); rto > 0 && rto < minrto {
 			minrto = rto
 		}
