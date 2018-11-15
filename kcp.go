@@ -881,10 +881,8 @@ func (kcp *KCP) flush(ackOnly bool) uint32 {
 		}
 
 		// get the nearest rto
-		// rto 大于现在的时间了????没看懂
-		errstring := fmt.Sprintf("%v:%v__%v____%v", segment.xmit, kcp.rx_rto, segment.rto, current)
-		fmt.Println(errstring)
-		if rto := _itimediff(segment.rto, current); rto > 0 && rto < minrto {
+		// bug fix
+		if rto := _itimediff(segment.resendts, current); rto > 0 && rto < minrto {
 			minrto = rto
 		}
 	}
